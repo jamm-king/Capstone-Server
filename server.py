@@ -11,4 +11,4 @@ def root():
         return jsonify({'message': 'POST request received', 'data': data})
 
 
-app.run(debug=True)
+app.run(host='0.0.0.0')
