@@ -2,7 +2,6 @@ import pygame
 from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
-from transformations import *
 from PIL import Image
 import numpy as np
 import math
@@ -12,82 +11,8 @@ from Model import Model
 
 PI = math.pi
 
-colors = [
-    (1, 0, 0),
-    (0, 1, 0),
-    (0, 0, 1)
-]
-vertices = np.array([])
-triangles = np.array([])
-
-
-def set_cube():
-    global vertices
-    global triangles
-
-    vertices = np.array([
-        (1, 1, 1, 1),
-        (1, 1, -1, 1),
-        (1, -1, 1, 1),
-        (-1, 1, 1, 1),
-        (1, -1, -1, 1),
-        (-1, 1, -1, 1),
-        (-1, -1, 1, 1),
-        (-1, -1, -1, 1)
-    ])
-    triangles = np.array([
-        (0, 2, 1),
-        (1, 2, 4),
-        (0, 1, 3),
-        (1, 5, 3),
-        (0, 3, 2),
-        (2, 3, 6),
-        (3, 5, 6),
-        (5, 7, 6),
-        (2, 6, 7),
-        (2, 7, 4),
-        (1, 4, 7),
-        (1, 7, 5)
-    ])
-
-
-# def set_model(filepath):
-#     global vertices
-#
-#     image = Image.open(filepath)
-#     annotations = segment_everything(image)
-#     longest = 0
-#     for i, annotation in enumerate(annotations):
-#         edges = extract_edge(annotation)
-#         if len(edges) > longest:
-#             longest = len(edges)
-#             vertices = np.array(edges)
-#             vertices = np.c_[vertices, np.zeros(vertices.shape[0])]
-#             vertices = np.c_[vertices, np.ones(vertices.shape[0])]
-#             vertices = vertices / 100
-#     print(vertices)
-
-
-def draw_cube():
-    set_cube()
-    draw_model()
-
-
-def draw_model(model):
-    global vertices
-    global triangles
-
-    glBegin(GL_TRIANGLES)
-    for triangle in triangles:
-        for vertex in triangle:
-            glColor3fv((0.8, 0.8, 0.8))
-            glVertex3fv(vertices[vertex][:3])
-    glEnd()
-
 
 def draw_model_point(model):
-    global vertices
-
     glPointSize(1.0)
     glBegin(GL_POINTS)
     for vertex in model.vertices:
@@ -97,21 +22,15 @@ def draw_model_point(model):
     glEnd()
 
 
-def rotate(angle, direction, point=None):
-    global vertices
-
-    M = rotation_matrix(angle, direction, point)
-    vertices = np.dot(M, vertices.T).T
-
-
-def main():
+def main(angle_data):
 
     # PROCESS VIDEO
     print("### processing video ###")
 
-    file_path = 'media/figure.mp4'
+    file_path = 'media/video.mp4'
+    # file_path = 'media/figure.mp4'
     video_processor = VideoProcessor()
-    video_processor.read(file_path)
+    video_processor.read(file_path, angle_data, 2 * PI / 40)
 
     frames = video_processor.get_frames()
 
@@ -199,26 +118,95 @@ def main():
     for i, label in enumerate(point_labels):
         coord = (int(point_coords[i][0] / scale), int(point_coords[i][1] / scale))
         image_processor.add_point(coord, label)
-    for i, frame in enumerate(frames):
+
+    boundary_len_sum = 0
+    average_boundary_len = 0
+    boundary_cnt = 0
+    bbox_left_avg = 0
+    bbox_top_avg = 0
+    bbox_width_avg = 0
+    bbox_height_avg = 0
+    bbox_left_sum = 0
+    bbox_top_sum = 0
+    bbox_width_sum = 0
+    bbox_height_sum = 0
+    bbox_cnt = 0
+    init_bbox = {}
+
+    for i in range(len(video_processor.sync_frames_idx)):
+        frame_idx = video_processor.sync_frames_idx[i]
+        angle_data_idx = video_processor.sync_angle_data_idx[i]
+        frame = frames[frame_idx]
+        angle_data = video_processor.angle_data[angle_data_idx]
+
+        print(f'frames : {frame_idx} / {len(frames)}')
+        print(f'angle data : {angle_data_idx} / {len(video_processor.angle_data)}')
+
         image = Image.fromarray(frame)
         image_processor.set_image(image)
         image_processor.normalize()
+        if i != 0:
+            image_processor.update_prompts()
         image_processor.segmentate()
-        # image_processor.smooth()
-        boundary = image_processor.extract_boundary()
-        # vertices = []
-        # for j, row in enumerate(image_processor.annotation[0]):
-        #     for k, pix in enumerate(row):
-        #         if pix:
-        #             vertices.append((k, j))
-        # model.add_vertices(np.array(vertices))
-        model.add_vertices(boundary)
-        image_processor.print_info()
+        image_processor.smooth()
         image_processor.update_object()
-        image_processor.update_prompts()
 
-        print(image_processor.object_center)
-        print(image_processor.object_bbox)
+        print(f'object_center : {image_processor.object_center}')
+        print(f'object_bbox : {image_processor.object_bbox}')
+        print(f'angle_data: ({angle_data["angleX"]}, {angle_data["angleY"]}, {angle_data["angleZ"]})')
+
+        boundary = image_processor.extract_boundary()
+        normalized_boundary = video_processor.normalize_2d_boundary(boundary, angle_data_idx)
+        # model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
+        boundary_len = len(normalized_boundary)
+        bbox = image_processor.object_bbox
+        bbox_left = bbox[0]
+        bbox_top = bbox[1]
+        bbox_width = bbox[2]
+        bbox_height = bbox[3]
+        if i == 0:
+            init_bbox = bbox
+            boundary_len_sum += boundary_len
+            boundary_cnt += 1
+            average_boundary_len = boundary_len
+            bbox_cnt += 1
+            bbox_left_avg = bbox_left
+            bbox_top_avg = bbox_top
+            bbox_width_avg = bbox_width
+            bbox_height_avg = bbox_height
+            bbox_left_sum += bbox_left
+            bbox_top_sum += bbox_top
+            bbox_width_sum += bbox_width
+            bbox_height_sum += bbox_height
+            model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
+        else:
+            if abs(boundary_len / average_boundary_len) > 1.5:
+                continue
+            if abs(bbox_left - bbox_left_avg) > 150 or abs(bbox_top - bbox_top_avg) > 150:
+                continue
+            else:
+                if bbox_width / bbox_width_avg > 1.5 or bbox_height / bbox_height_avg > 1.5:
+                    target_width = bbox_width * 0.0 + bbox_width_avg * 1.0
+                    target_height = bbox_height * 0.0 + bbox_height_avg * 1.0
+                    ratio_w = target_width / bbox_width
+                    ratio_h = target_height / bbox_height
+                    M = np.array([[ratio_h, 0],
+                                  [0, ratio_w]])
+                    normalized_boundary = np.dot(normalized_boundary, M.T)
+                    bbox_cnt += 1
+                    bbox_left_sum += bbox_left
+                    bbox_height_sum += bbox_top_sum
+                    bbox_width_sum += bbox_width
+                    bbox_height_sum += bbox_height
+                    bbox_left_avg = bbox_left_sum / bbox_cnt
+                    bbox_top_avg = bbox_top_sum / bbox_cnt
+                    bbox_width_avg = bbox_width_sum / bbox_cnt
+                    bbox_height_avg = bbox_height_sum / bbox_cnt
+
+                boundary_len_sum += boundary_len
+                boundary_cnt += 1
+                average_boundary_len = boundary_len_sum / boundary_cnt
+                model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         model.draw()
@@ -226,49 +214,126 @@ def main():
         glPointSize(5.0)
         glBegin(GL_POINTS)
         glColor3fv((0., 0., 1.0))
-        glVertex3fv((oc[0] / 50, oc[1] / 50, 0))
+        glVertex3fv((0, 0, 0))
         for i, point in enumerate(image_processor.point_coords):
             if image_processor.point_labels[i]:
                 glColor3fv((0., 1.0, 0.))
             else:
                 glColor3fv((1.0, 0., 0.))
-            glVertex3fv((point[0] / 50, point[1] / 50, 0))
+            dx = -image_processor.object_center[0]
+            dy = -image_processor.object_center[1]
+            glVertex3fv(((point[0] + dx) / 50, (point[1] + dy) / 50, 0))
         glEnd()
         pygame.display.flip()
-        pygame.time.wait(10)
-        model.reset()
+        # pygame.time.wait(10)
+        # model.reset()
+
+    pygame.quit()
+
+    # image_processor = ImageProcessor()
+    # model = Model()
+    # for i, label in enumerate(point_labels):
+    #     coord = (int(point_coords[i][0] / scale), int(point_coords[i][1] / scale))
+    #     image_processor.add_point(coord, label)
+    #
+    # # boundary_len_sum = 0
+    # # average_boundary_len = 0
+    # # boundary_cnt = 0
+    #
+    # bbox_width_avg = 0
+    # bbox_height_avg = 0
+    # bbox_width_sum = 0
+    # bbox_height_sum = 0
+    # bbox_cnt = 0
+    #
+    # for i in range(len(video_processor.sync_frames_idx)):
+    #     frame_idx = video_processor.sync_frames_idx[i]
+    #     angle_data_idx = video_processor.sync_angle_data_idx[i]
+    #     frame = frames[frame_idx]
+    #     angle_data = video_processor.angle_data[angle_data_idx]
+    #
+    #     print(f'frames : {frame_idx} / {len(frames)}')
+    #     print(f'angle data : {angle_data_idx} / {len(video_processor.angle_data)}')
+    #
+    #     image = Image.fromarray(frame)
+    #     image_processor.set_image(image)
+    #     image_processor.normalize()
+    #     if i != 0:
+    #         image_processor.update_prompts()
+    #     image_processor.segmentate()
+    #     image_processor.smooth()
+    #     image_processor.update_object()
+    #
+    #     print(f'object_center : {image_processor.object_center}')
+    #     print(f'object_bbox : {image_processor.object_bbox}')
+    #     print(f'angle_data: ({angle_data["angleX"]}, {angle_data["angleY"]}, {angle_data["angleZ"]})')
+    #
+    #     boundary = image_processor.extract_boundary()
+    #     normalized_boundary = video_processor.normalize_2d_boundary(boundary, i)
+    #     # boundary_len = len(normalized_boundary)
+    #     # if i == 0:
+    #     #     boundary_len_sum += boundary_len
+    #     #     boundary_cnt += 1
+    #     #     average_boundary_len = boundary_len
+    #     # else:
+    #     #     if abs(boundary_len / average_boundary_len) > 2:
+    #     #         continue
+    #     #     else:
+    #     #         boundary_len_sum += boundary_len
+    #     #         boundary_cnt += 1
+    #     #         average_boundary_len = boundary_len_sum / boundary_cnt
+    #     #         model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
+    #     bbox = image_processor.object_bbox
+    #     bbox_width = bbox[2]
+    #     bbox_height = bbox[3]
+    #     if i == 0:
+    #         bbox_cnt += 1
+    #         bbox_width_avg = bbox_width
+    #         bbox_height_avg = bbox_height
+    #         bbox_width_sum += bbox_width
+    #         bbox_height_sum += bbox_height
+    #         model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
+    #     else:
+    #         if bbox_width / bbox_width_avg > 1.5 or bbox_height / bbox_height_avg > 1.5:
+    #             continue
+    #         else:
+    #             bbox_cnt += 1
+    #             bbox_width_sum += bbox_width
+    #             bbox_height_sum += bbox_height
+    #             bbox_width_avg = bbox_width_sum / bbox_cnt
+    #             bbox_height_avg = bbox_height_sum / bbox_cnt
+    #             model.add_vertices(normalized_boundary, video_processor.get_rotate_matrix(angle_data_idx))
+    #     print(f'object_bbox_avg : {bbox_width_avg} {bbox_height_avg}')
+
+    pygame.init()
+
+    display_width = 800
+    display_height = 600
+    display_shape = (display_width, display_height)
+
+    pygame.display.set_caption('SAMpler interface')
+    clock = pygame.time.Clock()
+    display = pygame.display.set_mode(display_shape, DOUBLEBUF | OPENGL)
+
+    gluPerspective(45, (display_width/display_height), 0.1, 50.0)
+    glTranslate(0.0, 0.0, -30.0)
+
+    done = False
+
+    while not done:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                done = True
+                pygame.quit()
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glRotate(15, 0.0, 1.0, 0.0)
+        # draw_model_point(model)
+        model.draw()
+        pygame.display.flip()
 
     pygame.quit()
 
 
-    # pygame.init()
-    #
-    # display_width = 800
-    # display_height = 600
-    # display_shape = (display_width, display_height)
-    #
-    # pygame.display.set_caption('SAMpler interface')
-    # clock = pygame.time.Clock()
-    # display = pygame.display.set_mode(display_shape, DOUBLEBUF | OPENGL)
-    #
-    # gluPerspective(45, (display_width/display_height), 0.1, 50.0)
-    # glTranslate(0.0, 0.0, -30.0)
-    #
-    # done = False
-    #
-    # while not done:
-    #     for event in pygame.event.get():
-    #         if event.type == pygame.QUIT:
-    #             done = True
-    #             pygame.quit()
-    #
-    #     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-    #     # rotate(PI / 192, (0, 1, 0), (0, 0, 0))
-    #     draw_model_point(model)
-    #     pygame.display.flip()
-    #     pygame.time.wait(10)
-    #
-    # pygame.quit()
-
-
-main()
+if __name__ == "__main__":
+    main(0)

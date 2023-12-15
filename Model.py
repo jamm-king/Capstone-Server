@@ -15,9 +15,11 @@ class Model:
         self.vertices.append(vertex)
         self.vertex_num += 1
 
-    def add_vertices(self, vertices):
+    def add_vertices(self, vertices, rotate_matrix):
+        vertices = vertices[::2]
         vertices = vertices / 50
-        vertices = np.hstack((vertices, np.zeros((vertices.shape[0], 2)), np.ones((vertices.shape[0], 1))))
+        vertices = np.hstack((vertices, np.zeros((vertices.shape[0], 1)), np.ones((vertices.shape[0], 1))))
+        vertices = np.dot(vertices, rotate_matrix.T)
         for vertex in vertices:
             self.vertices.append(vertex)
         self.vertex_num += len(vertices)

@@ -148,7 +148,6 @@ class MobileSAM:
         )
 
         results = format_results(masks, scores, logits, 0)
-        print(results)
 
         annotations, _ = point_prompt(
             results, scaled_points, scaled_labels, new_h, new_w
